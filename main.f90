@@ -209,6 +209,49 @@ SUBROUTINE ADVECTVEL(VX,VY,VX_T,VY_T,S,dt,h)
 
 END SUBROUTINE
 
+SUBROUTINE solveIncompressibility_J(VX,VX_T,VY,VY_T,pressure,pressure_t,State,niters,density,dt,h)
+        REAL,allocatable,dimension(:,:) :: VX,VY,VX_T,VY_T,pressure,pressure_t
+        INTEGER,dimension(:,:) :: STATE
+        REAL :: dt,h,density
+        REAL :: cp,sx0,sx1,sy0,sy1,p,div
+        INTEGER :: I,J,K,niters,s
+        cp = density*h/dt
+        DO K=1,niters
+        DO I=2,SIZE( VX,2 )-1
+                DO J=2,SIZE(VX,1)-1
+                        IF (STATE(J,I) .EQ. 0) CYCLE 
+                        s = STATE(J,I)
+                        sx0 = STATE(J,I-1)
+                        sx1 = STATE(J,I+1)
+                        sy0 = STATE(J-1,I)
+                        sy1 = STATE(J+1,I)
+                        s = sx0 + sx1 + sy0 + sy1
+                        IF ( s .EQ. 0 ) CYCLE
+                        div = VX(J,I+1) - VX(J,I) + VY(J+1,I) - VY(J,I)
+                        pressure_t(J,I) = (pressure(J,i-1)+pressure(J,i+1)+pressure(J-1,i)+pressure(J+1,i)-h*h*div)/s 
+                END DO
+        END DO
+        DO I=2,SIZE( VX,2 )-1
+                DO J=2,SIZE(VX,1)-1
+                        IF (STATE(J,I) .EQ. 0) CYCLE 
+                        s = STATE(J,I)
+                        sx0 = STATE(J,I-1)
+                        sx1 = STATE(J,I+1)
+                        sy0 = STATE(J-1,I)
+                        sy1 = STATE(J+1,I)
+                        s = sx0 + sx1 + sy0 + sy1
+                        IF ( s .EQ. 0 ) CYCLE
+                        VX_T(J,I)=VX(J,I)-sx0*(pressure(J,I)-pressure(J,I-1))/(h)
+                        VY_T(J,I)=VY(J,I)-sy0*(pressure(J,I)-pressure(J-1,I))/(h)
+                END DO
+        END DO
+        call swap_fields(VX,VX_T)
+        call swap_fields(VY,VY_T)
+        call swap_fields(pressure,pressure_t)
+        END DO
+
+END SUBROUTINE
+
 SUBROUTINE solveIncompressibility(VX,VY,State,niters,relax,density,dt,h)
         REAL,dimension(:,:) :: VX,VY
         INTEGER,dimension(:,:) :: STATE
@@ -248,7 +291,7 @@ PROGRAM FLUIDSIMULATION
         REAL :: velocity,overRelaxation 
         INTEGER :: NX,NY,res,steps,niters,IT
         REAL :: simulationHeight,simulationWidth 
-        REAL,DIMENSION(:,:), allocatable :: VX,VY,pressure,smoke
+        REAL,DIMENSION(:,:), allocatable :: VX,VY,pressure,pressure_t,smoke
         INTEGER,DIMENSION(:,:), allocatable :: state
         real :: start, finish
         REAL,DIMENSION(:,:), allocatable :: VX_T,VY_T,smoke_t 
@@ -260,8 +303,8 @@ PROGRAM FLUIDSIMULATION
         velocity=2
 
 
-        steps=1000
-        res=200
+        steps=300
+        res=50
         overRelaxation = 1.9
         niters=100
         simulationHeight=1.0
@@ -271,7 +314,8 @@ PROGRAM FLUIDSIMULATION
         dx = simulationHeight / res
         NX = FLOOR(simulationWidth / dx) 
         NY = FLOOR(simulationHeight / dx )
-        allocate( VX(NY,NX),VY(NY,NX),state(NY,NX),VX_T(NY,NX),VY_T(NY,NX),smoke(NY,NX),smoke_t(NY,NX))
+        allocate(VX(NY,NX),VY(NY,NX),state(NY,NX),VX_T(NY,NX),VY_T(NY,NX),smoke(NY,NX),smoke_t(NY,NX))
+        allocate( pressure(Ny,Nx),pressure_t(NY,NX) )
         
 
         write(*,*) "Starting simulation"
@@ -284,7 +328,7 @@ PROGRAM FLUIDSIMULATION
 !        CALL WRITEFIELD_I(STATE,"state.out")
         SMOKE=0
         SMOKE_T=0
-        DO IT=40,60
+        DO IT=20,30
                 SMOKE(IT,1) = 4
                 SMOKE_T(IT,1) = 4
         END DO
@@ -296,7 +340,8 @@ PROGRAM FLUIDSIMULATION
           CALL WRITEFIELD(SMOKE,FN) 
           WRITE(FN,'(A5,I4.4,A4)') 'VelY_',IT,'.out'
           CALL WRITEFIELD(VY,FN) 
-          CALL solveIncompressibility(VX,VY,State,niters,overRelaxation,density,dt,dx)
+          !CALL solveIncompressibility(VX,VY,State,niters,overRelaxation,density,dt,dx)
+          CALL solveIncompressibility_J(VX,VX_T,VY,VY_T,pressure,pressure_t,State,niters,density,dt,dx)
           CALL EXTRAPOLATE(VX,VY)
           VX_T = VX
           VY_T = VY
@@ -306,4 +351,5 @@ PROGRAM FLUIDSIMULATION
 
 
         deallocate(VX,VY,state,VX_T,VY_T,smoke,smoke_t)
+        deallocate(pressure,pressure_t)
 END PROGRAM FLUIDSIMULATION
