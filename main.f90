@@ -46,8 +46,21 @@ SUBROUTINE ADD_OBSTACLE_CIRCLE(STATE,x0,y0,r,h)
                         ENDIF
 
                 END DO
+        END DO 
+END SUBROUTINE
+SUBROUTINE ADD_OBSTACLE_SLAB(STATE,x0,y0,xdim,ydim,h)
+        INTEGER, DIMENSION(:,:),intent(inout) :: STATE
+        REAL :: x0,y0,xdim,ydim,h
+        INTEGER :: I,J,xmin,xmax,ymin,ymax
+        xmin = Floor(x0/h) +1
+        ymin = Floor(y0/h) +1
+        xmax = FLOOR((x0+xdim)/h)+1
+        ymax = FLOOR((y0+ydim)/h)+1
+        DO I=xmin,xmax
+                DO J = ymin,ymax
+                        STATE(J,I) = 0.0
+                END DO
         END DO
-        
 END SUBROUTINE
 
 SUBROUTINE LEFT_VELOCITY_INLET(VX,STATE,INITIAL_VELOCITY)
@@ -157,6 +170,7 @@ SUBROUTINE ADVECTSMOKE(VX,VY,SMOKE,SMOKE_T,S,dt,h)
         REAL :: dt,h
         REAL :: x,y,h2,u,v
         h2 = h*0.5
+        !$OMP PARALLEL DO  PRIVATE(x,y,u,v,I,J) 
         DO I=2,SIZE( VX,2 )-1
                 DO J=2,SIZE(VX,1)-1
                         IF ( S(J,I) .NE. 0 )  THEN
@@ -179,6 +193,7 @@ SUBROUTINE ADVECTVEL(VX,VY,VX_T,VY_T,S,dt,h)
         REAL :: dt,h
         REAL :: x,y,h2,u,v
         h2 = h*0.5
+        !$OMP PARALLEL DO  PRIVATE(x,y,u,v,I,J) 
         DO  I=2,SIZE( VX,2 )-1
                 DO J=2,SIZE(VX,1)-1
                         IF (S(J,I) .NE. 0 .AND. S(J,I-1) .NE. 0 .AND. J .LT. SIZE(VX,1) ) THEN
@@ -217,37 +232,26 @@ SUBROUTINE solveIncompressibility_J(VX,VX_T,VY,VY_T,pressure,pressure_t,State,ni
         INTEGER :: I,J,K,niters,s
         cp = density*h/dt
         DO K=1,niters
-        DO I=2,SIZE( VX,2 )-1
-                DO J=2,SIZE(VX,1)-1
-                        IF (STATE(J,I) .EQ. 0) CYCLE 
-                        s = STATE(J,I)
-                        sx0 = STATE(J,I-1)
-                        sx1 = STATE(J,I+1)
-                        sy0 = STATE(J-1,I)
-                        sy1 = STATE(J+1,I)
-                        s = sx0 + sx1 + sy0 + sy1
-                        IF ( s .EQ. 0 ) CYCLE
-                        div = VX(J,I+1) - VX(J,I) + VY(J+1,I) - VY(J,I)
-                        pressure_t(J,I) = (pressure(J,i-1)+pressure(J,i+1)+pressure(J-1,i)+pressure(J+1,i)-h*h*div)/s 
+        !$OMP PARALLEL DO  PRIVATE(s,sx0,sx1,sy0,sy1,div,I,J) 
+                DO I=2,SIZE( VX,2 )-1
+                        DO J=2,SIZE(VX,1)-1
+                                IF (STATE(J,I) .EQ. 0) CYCLE 
+                                s = STATE(J,I)
+                                sx0 = STATE(J,I-1)
+                                sx1 = STATE(J,I+1)
+                                sy0 = STATE(J-1,I)
+                                sy1 = STATE(J+1,I)
+                                s = sx0 + sx1 + sy0 + sy1
+                                IF ( s .EQ. 0 ) CYCLE
+                                div = VX(J,I+1) - VX(J,I) + VY(J+1,I) - VY(J,I)
+                                pressure_t(J,I) = (pressure(J,i-1)+pressure(J,i+1)+pressure(J-1,i)+pressure(J+1,i)-h*h*div)/s 
+                                VX_T(J,I)=VX(J,I)-sx0*(pressure(J,I)-pressure(J,I-1))/(h)
+                                VY_T(J,I)=VY(J,I)-sy0*(pressure(J,I)-pressure(J-1,I))/(h)
+                        END DO
                 END DO
-        END DO
-        DO I=2,SIZE( VX,2 )-1
-                DO J=2,SIZE(VX,1)-1
-                        IF (STATE(J,I) .EQ. 0) CYCLE 
-                        s = STATE(J,I)
-                        sx0 = STATE(J,I-1)
-                        sx1 = STATE(J,I+1)
-                        sy0 = STATE(J-1,I)
-                        sy1 = STATE(J+1,I)
-                        s = sx0 + sx1 + sy0 + sy1
-                        IF ( s .EQ. 0 ) CYCLE
-                        VX_T(J,I)=VX(J,I)-sx0*(pressure(J,I)-pressure(J,I-1))/(h)
-                        VY_T(J,I)=VY(J,I)-sy0*(pressure(J,I)-pressure(J-1,I))/(h)
-                END DO
-        END DO
-        call swap_fields(VX,VX_T)
-        call swap_fields(VY,VY_T)
-        call swap_fields(pressure,pressure_t)
+                call swap_fields(VX,VX_T)
+                call swap_fields(VY,VY_T)
+                call swap_fields(pressure,pressure_t)
         END DO
 
 END SUBROUTINE
@@ -300,15 +304,15 @@ PROGRAM FLUIDSIMULATION
 
 
         density=1000
-        velocity=2
+        velocity=6
 
 
-        steps=300
-        res=50
+        steps=800
+        res=100
         overRelaxation = 1.9
         niters=100
         simulationHeight=1.0
-        simulationWidth=3.0
+        simulationWidth=2.0
         dt = 1.0 / 60.0
 
         dx = simulationHeight / res
@@ -323,23 +327,24 @@ PROGRAM FLUIDSIMULATION
         write(*,*) "RES and dt: ",dx,dt,dt*velocity
         CALL LEFT_VELOCITY_INLET(VX,state,velocity)
         CALL LEFT_VELOCITY_INLET(VX_T,state,velocity)
-        CALL ADD_OBSTACLE_CIRCLE(state,1.5,0.5,0.15,dx) 
-!        CALL WRITEFIELD(VX,"VelX_.out")
-!        CALL WRITEFIELD_I(STATE,"state.out")
+!        CALL ADD_OBSTACLE_CIRCLE(state,1.5,0.7,0.15,dx) 
+!        CALL ADD_OBSTACLE_CIRCLE(state,1.5,0.3,0.15,dx) 
+        CALL ADD_OBSTACLE_CIRCLE(state,1.0,0.5,0.15,dx) 
+!        CALL ADD_OBSTACLE_SLAB(STATE,0.25,0.25,0.1,0.25,dx)
         SMOKE=0
         SMOKE_T=0
-        DO IT=20,30
-                SMOKE(IT,1) = 4
-                SMOKE_T(IT,1) = 4
+        DO IT=40,60
+                SMOKE(IT,1) = 1
+                SMOKE_T(IT,1) = 1
         END DO
         DO IT=1,steps
                 WRITE(*,*) "STEP: ", IT
-          WRITE(FN,'(A5,I4.4,A4)') 'VelX_',IT,'.out'
-          CALL WRITEFIELD(VX,FN) 
-          WRITE(FN,'(A6,I4.4,A4)') 'Smoke_',IT,'.out'
-          CALL WRITEFIELD(SMOKE,FN) 
-          WRITE(FN,'(A5,I4.4,A4)') 'VelY_',IT,'.out'
-          CALL WRITEFIELD(VY,FN) 
+!          WRITE(FN,'(A5,I4.4,A4)') 'VelX_',IT,'.out'
+!          CALL WRITEFIELD(VX,FN) 
+!          WRITE(FN,'(A6,I4.4,A4)') 'Smoke_',IT,'.out'
+!          CALL WRITEFIELD(SMOKE,FN) 
+!          WRITE(FN,'(A5,I4.4,A4)') 'VelY_',IT,'.out'
+!          CALL WRITEFIELD(VY,FN) 
           !CALL solveIncompressibility(VX,VY,State,niters,overRelaxation,density,dt,dx)
           CALL solveIncompressibility_J(VX,VX_T,VY,VY_T,pressure,pressure_t,State,niters,density,dt,dx)
           CALL EXTRAPOLATE(VX,VY)
