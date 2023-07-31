@@ -113,32 +113,17 @@ SUBROUTINE EXTRAPOLATE(VX,VY)
         END DO 
 END SUBROUTINE 
 
-FUNCTION SAMPLE_FIELD(F,x,y,h,typ)
-      character(*),intent(in) :: typ
+FUNCTION SAMPLE_FIELD(F,x,y,h,h1,h2,dx,dy)
       REAL :: SAMPLE_FIELD
       REAL,DIMENSION(:,:),intent(in) :: F 
       REAL,intent(in) :: h
       REAL,intent(in) :: x,y
       REAL :: xp,yp
-      REAL ::dx,dy,h1,h2  
+      REAL,intent(in) ::dx,dy,h1,h2  
       REAL :: tx,sx,sy,ty
       INTEGER :: x0,x1,y0,y1
-      h1 = 1.0/h
-      h2 = 0.5*h
-      !write(*,*) x,y
       xp = MAX(MIN(x,SIZE(F,2)*h),h)
       yp = MAX(MIN(y,SIZE(F,1)*h),h)
-      dx = 0
-      dy = 0
-      SELECT CASE (typ)
-         CASE("VX")
-                 dy = h2
-         CASE("VY")
-                 dx = h2
-         CASE("Smoke")        
-                 dx = h2
-                 dy = h2
-      END SELECT
       x0 = MIN(FLOOR((xp-dx)*h1)+1,size(F,2))
       y0 = MIN(FLOOR((yp-dy)*h1)+1,size(F,1))
       tx = ((xp-dx) - (x0-1)*h) * h1
@@ -147,7 +132,6 @@ FUNCTION SAMPLE_FIELD(F,x,y,h,typ)
       y1 = MIN(y0+1,size(F,1))
       sx = 1- tx
       sy = 1 - ty
-      !write(*,*) x0,y0,x,y 
       SAMPLE_FIELD=sx*sy*F(y0,x0) + tx*sy*F(Y0,X1) + tx*ty*F(Y1,X1) + sx*ty*F(Y1,X0)
 
 END FUNCTION
@@ -168,7 +152,8 @@ SUBROUTINE ADVECTSMOKE(VX,VY,SMOKE,SMOKE_T,S,dt,h)
         INTEGER,dimension(:,:),intent(in) ::S
         INTEGER I,J
         REAL :: dt,h
-        REAL :: x,y,h2,u,v
+        REAL :: x,y,h2,h1,u,v
+        h1 = 1.0/h
         h2 = h*0.5
         !$OMP PARALLEL DO  PRIVATE(x,y,u,v,I,J) 
         DO I=2,SIZE( VX,2 )-1
@@ -178,7 +163,7 @@ SUBROUTINE ADVECTSMOKE(VX,VY,SMOKE,SMOKE_T,S,dt,h)
                                 v = (VY(J,I) + VY(J+1,I) )*0.5 
                                 x = (i-1)*h + h2 - dt*u
                                 y = (j-1)*h + h2 - dt*v
-                                SMOKE_T(J,I) = SAMPLE_FIELD(SMOKE,x,y,h,"Smoke")
+                                SMOKE_T(J,I) = SAMPLE_FIELD(SMOKE,x,y,h,h1,h2,h2,h2)
                         ENDIF  
                 END DO
         END DO
@@ -191,7 +176,8 @@ SUBROUTINE ADVECTVEL(VX,VY,VX_T,VY_T,S,dt,h)
         INTEGER,allocatable,dimension(:,:) ::S
         INTEGER I,J
         REAL :: dt,h
-        REAL :: x,y,h2,u,v
+        REAL :: x,y,h2,h1,u,v
+        h1 = 1.0/h
         h2 = h*0.5
         !$OMP PARALLEL DO  PRIVATE(x,y,u,v,I,J) 
         DO  I=2,SIZE( VX,2 )-1
@@ -203,7 +189,7 @@ SUBROUTINE ADVECTVEL(VX,VY,VX_T,VY_T,S,dt,h)
                                 v = AVGVY(VY,I,J)
                                 x = x -dt*u
                                 y = y -dt*v
-                                u = SAMPLE_FIELD(VX,x,y,h,"VX")
+                                u = SAMPLE_FIELD(VX,x,y,h,h1,h2,0.0,h2)
                                 VX_T(J,I) =  u
                         ENDIF 
                         IF (S(J,I) .NE. 0 .AND. S(J-1,I) .NE. 0 .AND. I .LT. SIZE(VX,2) ) THEN
@@ -213,7 +199,7 @@ SUBROUTINE ADVECTVEL(VX,VY,VX_T,VY_T,S,dt,h)
                                 v = VY(J,I)
                                 x = x -dt*u
                                 y = y -dt*v
-                                v = SAMPLE_FIELD(VY,x,y,h,"VY")
+                                v = SAMPLE_FIELD(VY,x,y,h,h1,h2,h2,0.0)
               
                                 VY_T(J,I) =  v
                         ENDIF 
@@ -227,26 +213,28 @@ END SUBROUTINE
 SUBROUTINE solveIncompressibility_J(VX,VX_T,VY,VY_T,pressure,pressure_t,State,niters,density,dt,h)
         REAL,allocatable,dimension(:,:) :: VX,VY,VX_T,VY_T,pressure,pressure_t
         INTEGER,dimension(:,:) :: STATE
-        REAL :: dt,h,density
+        REAL :: dt,h,density,h1,hh
         REAL :: cp,sx0,sx1,sy0,sy1,p,div
-        INTEGER :: I,J,K,niters,s
-        cp = density*h/dt
+        INTEGER :: I,J,K,niters,s,s0
+        REAL,PARAMETER,dimension(4) :: CA = (/ 1.0,0.5,1.0/3.0,0.25 /) 
+!        cp = density*h/dt
+        h1 = 1.0/h
+        hh = h*h
         DO K=1,niters
         !$OMP PARALLEL DO  PRIVATE(s,sx0,sx1,sy0,sy1,div,I,J) 
                 DO I=2,SIZE( VX,2 )-1
                         DO J=2,SIZE(VX,1)-1
                                 IF (STATE(J,I) .EQ. 0) CYCLE 
-                                s = STATE(J,I)
                                 sx0 = STATE(J,I-1)
                                 sx1 = STATE(J,I+1)
                                 sy0 = STATE(J-1,I)
                                 sy1 = STATE(J+1,I)
-                                s = sx0 + sx1 + sy0 + sy1
+                                s = (sx0 + sx1 + sy0 + sy1)
                                 IF ( s .EQ. 0 ) CYCLE
                                 div = VX(J,I+1) - VX(J,I) + VY(J+1,I) - VY(J,I)
-                                pressure_t(J,I) = (pressure(J,i-1)+pressure(J,i+1)+pressure(J-1,i)+pressure(J+1,i)-h*h*div)/s 
-                                VX_T(J,I)=VX(J,I)-sx0*(pressure(J,I)-pressure(J,I-1))/(h)
-                                VY_T(J,I)=VY(J,I)-sy0*(pressure(J,I)-pressure(J-1,I))/(h)
+                                pressure_t(J,I) = (pressure(J,i-1)+pressure(J,i+1)+pressure(J-1,i)+pressure(J+1,i)-hh*div)*CA(s) 
+                                VX_T(J,I)=VX(J,I)-sx0*(pressure(J,I)-pressure(J,I-1))*h1
+                                VY_T(J,I)=VY(J,I)-sy0*(pressure(J,I)-pressure(J-1,I))*h1
                         END DO
                 END DO
                 call swap_fields(VX,VX_T)
@@ -333,18 +321,18 @@ PROGRAM FLUIDSIMULATION
 !        CALL ADD_OBSTACLE_SLAB(STATE,0.25,0.25,0.1,0.25,dx)
         SMOKE=0
         SMOKE_T=0
-        DO IT=40,60
+        DO IT=20,80
                 SMOKE(IT,1) = 1
                 SMOKE_T(IT,1) = 1
         END DO
         DO IT=1,steps
                 WRITE(*,*) "STEP: ", IT
-!          WRITE(FN,'(A5,I4.4,A4)') 'VelX_',IT,'.out'
-!          CALL WRITEFIELD(VX,FN) 
-!          WRITE(FN,'(A6,I4.4,A4)') 'Smoke_',IT,'.out'
-!          CALL WRITEFIELD(SMOKE,FN) 
-!          WRITE(FN,'(A5,I4.4,A4)') 'VelY_',IT,'.out'
-!          CALL WRITEFIELD(VY,FN) 
+          WRITE(FN,'(A5,I4.4,A4)') 'VelX_',IT,'.out'
+          CALL WRITEFIELD(VX,FN) 
+          WRITE(FN,'(A6,I4.4,A4)') 'Smoke_',IT,'.out'
+          CALL WRITEFIELD(SMOKE,FN) 
+          WRITE(FN,'(A5,I4.4,A4)') 'VelY_',IT,'.out'
+          CALL WRITEFIELD(VY,FN) 
           !CALL solveIncompressibility(VX,VY,State,niters,overRelaxation,density,dt,dx)
           CALL solveIncompressibility_J(VX,VX_T,VY,VY_T,pressure,pressure_t,State,niters,density,dt,dx)
           CALL EXTRAPOLATE(VX,VY)

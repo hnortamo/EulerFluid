@@ -3,10 +3,11 @@ set view map
 
 set term gif size 1500, 1500 animate delay 10 
 set output 'foobar.gif'
-#set zrange [-10:10]; set cbrange [-10:10];
-do for [i=1:500:1]{
+do for [i=1:800:1]{
 	set multiplot layout 3,1 rowsfirst
+#	set zrange [-3:3]; set cbrange [-3:3];
 	splot sprintf("VelX_%04.0f.out",i) matrix with image notitle
 	splot sprintf("VelY_%04.0f.out",i) matrix with image notitle
+#	set zrange [0:4.5]; set cbrange [0:4.5];
 	splot sprintf("Smoke_%04.0f.out",i) matrix with image notitle
 }
